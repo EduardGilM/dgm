@@ -28,6 +28,8 @@ export OPENAI_API_KEY='...'
 export ANTHROPIC_API_KEY='...'
 ```
 
+To use Ollama
+
 ```bash
 # Verify that Docker is properly configured in your environment.
 docker run hello-world
