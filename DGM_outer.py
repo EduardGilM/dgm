@@ -5,6 +5,7 @@ import math
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, TimeoutError
+from dotenv import load_dotenv
 
 from prompts.self_improvement_prompt import find_selfimprove_eval_logs
 from self_improve_step import self_improve
@@ -13,6 +14,8 @@ from utils.docker_utils import setup_logger
 from utils.evo_utils import load_dgm_metadata, is_compiled_self_improve
 
 def initialize_run(output_dir, prevrun_dir=None, polyglot=False):
+    # Load environment variables from .env if present
+    load_dotenv()
     # Initialize archive
     start_gen_num = 0
     if not prevrun_dir:
@@ -28,7 +31,12 @@ def initialize_run(output_dir, prevrun_dir=None, polyglot=False):
     initial_folder_name = 'initial' if not polyglot else 'initial_polyglot'
     if not prevrun_dir and not os.path.exists(f"{output_dir}/{initial_folder_name}"):
         if os.path.exists(initial_folder_name):
-            os.system(f"cp -r {initial_folder_name}/ {output_dir}/initial")
+            import shutil
+            dest_dir = os.path.join(output_dir, "initial")
+            os.makedirs(output_dir, exist_ok=True)
+            if os.path.exists(dest_dir):
+                shutil.rmtree(dest_dir)
+            shutil.copytree(initial_folder_name, dest_dir)
         else:
             raise RuntimeError("Error: Need to properly configure evaluation results for the initial version.")
     

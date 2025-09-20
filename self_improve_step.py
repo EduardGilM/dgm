@@ -25,7 +25,8 @@ from utils.docker_utils import (
 )
 
 dataset = None
-diagnose_model = 'o1-2024-12-17'
+# Default diagnose model can be overridden via env var DIAGNOSE_MODEL
+diagnose_model = os.getenv('DIAGNOSE_MODEL', 'deepseek-chat')
 
 def diagnose_problem(entry, commit, root_dir, out_dir, patch_files=[], max_attempts=3, polyglot=False):
     client = create_client(diagnose_model)
@@ -271,7 +272,17 @@ def self_improve(
         client, root_dir, image_name, container_name,
         force_rebuild=force_rebuild,
     )
-    container.start()
+    if container is None:
+        safe_log("Failed to build or start Docker container; aborting this self-improvement run.")
+        save_metadata(metadata, output_dir)
+        return metadata
+    # Ensure container is running
+    try:
+        container.start()
+    except Exception as e:
+        safe_log(f"Failed to start container: {e}")
+        save_metadata(metadata, output_dir)
+        return metadata
 
     if polyglot:
         # remove the swe version of coding_agent.py
@@ -343,6 +354,12 @@ def self_improve(
         "AWS_ACCESS_KEY_ID": os.getenv('AWS_ACCESS_KEY_ID'),
         "AWS_SECRET_ACCESS_KEY": os.getenv('AWS_SECRET_ACCESS_KEY'),
         "OPENAI_API_KEY": os.getenv('OPENAI_API_KEY'),
+        # DeepSeek/OpenRouter optional keys for non-OpenAI providers
+        "DEEPSEEK_API_KEY": os.getenv('DEEPSEEK_API_KEY'),
+        "OPENROUTER_API_KEY": os.getenv('OPENROUTER_API_KEY'),
+        # Allow overriding models inside the container
+        "CODE_MODEL": os.getenv('CODE_MODEL'),
+        "DIAGNOSE_MODEL": os.getenv('DIAGNOSE_MODEL', diagnose_model),
     }
     cmd = [
         "timeout", "1800",  # 30min timeout
@@ -354,6 +371,8 @@ def self_improve(
         "--outdir", "/dgm/",
         "--test_description", test_description,
         "--self_improve",
+        # Forward CODE_MODEL when present
+        *( ["--code_model", os.getenv('CODE_MODEL')] if os.getenv('CODE_MODEL') else [] ),
     ]
     exec_result = container.exec_run(cmd, environment=env_vars, workdir='/')
     log_container_output(exec_result)
@@ -430,8 +449,15 @@ def main():
     parser.add_argument('--test_task_list', default=None, type=str, help='List of tasks to evaluate the self-improvement')
     args = parser.parse_args()
 
-    # Copy cached initial version into experiment dir
-    os.system(f"cp -r initial/ {args.output_dir}")
+    # Copy cached initial version into experiment dir (cross-platform)
+    import shutil
+    src_initial = os.path.join(os.getcwd(), "initial")
+    if os.path.exists(src_initial):
+        os.makedirs(args.output_dir, exist_ok=True)
+        dest_initial = os.path.join(args.output_dir, "initial")
+        if os.path.exists(dest_initial):
+            shutil.rmtree(dest_initial)
+        shutil.copytree(src_initial, dest_initial)
 
     metadata = self_improve(
         parent_commit=args.parent_commit,

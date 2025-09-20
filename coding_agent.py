@@ -74,6 +74,7 @@ class AgenticSystem:
             test_description=None,
             self_improve=False,
             instance_id=None,
+            code_model: str | None = None,
         ):
         self.problem_statement = problem_statement
         self.git_tempdir = git_tempdir
@@ -82,7 +83,12 @@ class AgenticSystem:
         self.test_description = test_description
         self.self_improve = self_improve
         self.instance_id = instance_id if not self_improve else 'dgm'
-        self.code_model = CLAUDE_MODEL
+        # Prefer explicit code_model arg, then env var CODE_MODEL, else default constant
+        self.code_model = (
+            code_model
+            if code_model is not None
+            else os.getenv("CODE_MODEL", CLAUDE_MODEL)
+        )
 
         # Initialize logger and store it in thread-local storage
         self.logger = setup_logger(chat_history_file)
@@ -178,6 +184,7 @@ def main():
     parser.add_argument('--test_description', default=None, required=False, help='Description of how to test the repository')
     parser.add_argument('--self_improve', default=False, action='store_true', help='Whether to self-improve the repository or solving swe')
     parser.add_argument('--instance_id', default=None, help='Instance ID for SWE issue')
+    parser.add_argument('--code_model', default=None, help='LLM model identifier to use (overrides env CODE_MODEL)')
     args = parser.parse_args()
 
     # Process the repository
@@ -189,6 +196,7 @@ def main():
         test_description=args.test_description,
         self_improve=args.self_improve,
         instance_id=args.instance_id,
+        code_model=args.code_model,
     )
 
     # Run the agentic system to try to solve the problem

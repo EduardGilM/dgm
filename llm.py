@@ -21,7 +21,8 @@ AVAILABLE_LLMS = [
     "o1-2024-12-17",
     "o3-mini-2025-01-31",
     # OpenRouter models
-    "llama3.1-405b",
+    "openrouter/meta-llama/llama3.1-405b",
+    "openrouter/deepseek/deepseek-chat-v3.1:free",
     # Anthropic Claude models via Amazon Bedrock
     "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
     "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
@@ -49,6 +50,10 @@ def create_client(model: str):
     Returns:
         Tuple[Any, str]: A tuple containing the client instance and the client model name.
     """
+    # Normalize model string to avoid issues with env vars including quotes or extra spaces
+    if isinstance(model, str):
+        model = model.strip().strip('"').strip("'")
+
     if model.startswith("claude-"):
         print(f"Using Anthropic API with model {model}.")
         return anthropic.Anthropic(), model
@@ -75,12 +80,17 @@ def create_client(model: str):
             base_url="https://api.deepseek.com"
         )
         return client, model
-    elif model == "llama3.1-405b":
-        print(f"Using OpenAI API with {model}.")
+    elif model.startswith("openrouter/") or "openrouter/" in model:
+        client_model = model.split("/")[-1]
+        print(f"Using OpenRouter API with {model}.")
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError("Missing OPENROUTER_API_KEY environment variable required for OpenRouter.")
         client = openai.OpenAI(
-            api_key=os.environ["OPENROUTER_API_KEY"],
+            api_key=api_key,
             base_url="https://openrouter.ai/api/v1"
-        ), model
+        )
+        return client, model
     else:
         raise ValueError(f"Model {model} not supported.")
 
@@ -121,10 +131,12 @@ def get_batch_responses_from_llm(
         new_msg_history = [
             new_msg_history + [{"role": "assistant", "content": c}] for c in content
         ]
-    elif model == "llama-3-1-405b-instruct":
+    elif model.startswith("openrouter/"):
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
+        # Keep full provider/model slug for OpenRouter
+        model_name = model[len("openrouter/"):]
         response = client.chat.completions.create(
-            model="meta-llama/llama-3.1-405b-instruct",
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_message},
                 *new_msg_history,
@@ -273,12 +285,12 @@ def get_response_from_llm(
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
         reasoning_content = response.choices[0].message.reasoning_content
-    elif model.startswith("llama3.1-"):
-        llama_size = model.split("-")[-1]
-        client_model = f"meta-llama/llama-3.1-{llama_size}-instruct"
+    elif model.startswith("openrouter/"):
+        # Keep full provider/model slug for OpenRouter
+        model_name = model[len("openrouter/"):]
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
         response = client.chat.completions.create(
-            model=client_model,
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_message},
                 *new_msg_history,
@@ -290,7 +302,7 @@ def get_response_from_llm(
         )
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-        resoning_content = response.choices[0].message.reasoning_content
+        #resoning_content = response.choices[0].message.reasoning_content
     else:
         raise ValueError(f"Model {model} not supported.")
     if print_debug:

@@ -101,6 +101,15 @@ def create_archive(path: Union[str, Path], data: Optional[bytes] = None) -> byte
     tar_stream.seek(0)
     return tar_stream.read()
 
+def _to_posix_path(p: Union[str, Path]) -> str:
+    """Convert a local/Windows path to POSIX-style string for container commands."""
+    if isinstance(p, Path):
+        s = p.as_posix()
+    else:
+        s = str(p).replace('\\', '/')
+    # Ensure root paths keep leading slash in containers
+    return s
+
 def build_dgm_container(
         client,
         repo_path='./',
@@ -112,20 +121,45 @@ def build_dgm_container(
     Build the Docker image for the dgm app and start a container from it.
     """
     try:
-        # Build the Docker image if force_rebuild is set or the image doesn't exist
-        if force_rebuild or not any(image.tags for image in client.images.list() if image_name in image.tags):
+        # Determine if the image already exists (match tag name before ':')
+        images = client.images.list()
+        existing_image = None
+        for img in images:
+            for tag in (img.tags or []):
+                if tag.split(":")[0] == image_name:
+                    existing_image = img
+                    break
+            if existing_image:
+                break
+
+        if force_rebuild or not existing_image:
             safe_log("Building the Docker image...")
-            image, logs = client.images.build(path=repo_path, tag=image_name, rm=True)
-            for log_entry in logs:
-                if 'stream' in log_entry:
-                    safe_log(log_entry['stream'].strip())
-            safe_log("Image built successfully.")
+            try:
+                image, logs = client.images.build(path=repo_path, tag=image_name, rm=True)
+                for log_entry in logs:
+                    if 'stream' in log_entry:
+                        safe_log(log_entry['stream'].strip())
+                safe_log("Image built successfully.")
+            except Exception as build_err:
+                # If the image already exists according to Docker, try to fetch and continue
+                msg = str(build_err)
+                if "AlreadyExists" in msg or "already exists" in msg:
+                    safe_log(f"Image already exists; proceeding without rebuild: {build_err}")
+                    try:
+                        image = client.images.get(f"{image_name}:latest")
+                    except Exception:
+                        image = existing_image
+                else:
+                    safe_log(f"Error while building the Docker image: {build_err}")
+                    return None
         else:
-            safe_log(f"Docker image '{image_name}' already exists. Skipping build.")
-            # Fetch the existing image
-            image = next((img for img in client.images.list() if image_name in img.tags), None)
+            safe_log(f"Docker image '{image_name}:latest' already exists. Skipping build.")
+            try:
+                image = client.images.get(f"{image_name}:latest")
+            except Exception:
+                image = existing_image
     except Exception as e:
-        safe_log(f"Error while building the Docker image: {e}")
+        safe_log(f"Error while checking/building the Docker image: {e}")
         return None
 
     try:
@@ -168,14 +202,14 @@ def copy_to_container(container, source_path: Union[str, Path], dest_path: Union
             
         # Determine container destination directory
         if source_path.is_file():
-            container_dest_dir = str(dest_path.parent)
+            container_dest_dir = _to_posix_path(dest_path.parent)
             archive_path = dest_path.name
             with open(source_path, 'rb') as source_file:
                 data = source_file.read()
             archive = create_archive(archive_path, data)
         else:
             # For directories, we want to copy to the parent of dest_path
-            container_dest_dir = str(dest_path.parent)
+            container_dest_dir = _to_posix_path(dest_path.parent)
             archive = create_archive(source_path)
             
         # Create destination directory in container if it doesn't exist
@@ -183,10 +217,10 @@ def copy_to_container(container, source_path: Union[str, Path], dest_path: Union
 
         safe_log(f"Copying {source_path} to container at {dest_path}")
         success = container.put_archive(container_dest_dir, archive)
-        
+
         if not success:
             raise Exception(f"Failed to copy {source_path} to container")
-            
+
         safe_log(f"Successfully copied {source_path} to container")
         
     except Exception as e:
@@ -208,15 +242,17 @@ def copy_from_container(container, source_path: Union[str, Path], dest_path: Uni
     """
     source_path = Path(source_path)
     dest_path = Path(dest_path)
+    source_posix = _to_posix_path(source_path)
     
     try:
         # Check if source exists in container
-        result = container.exec_run(f"test -e {source_path}")
+        result = container.exec_run(f"test -e {source_posix}")
         if result.exit_code and result.exit_code != 0:
-            raise FileNotFoundError(f"Source path not found in container: {source_path}")
+            safe_log(f"Source path not found in container: {source_posix}")
+            return
             
         # Get file type from container
-        result = container.exec_run(f"stat -f '%HT' {source_path}")
+        result = container.exec_run(f"stat -f '%HT' {source_posix}")
         is_file = result.output.decode().strip() == 'Regular File'
             
         # Create destination directory if it doesn't exist
@@ -225,7 +261,7 @@ def copy_from_container(container, source_path: Union[str, Path], dest_path: Uni
         safe_log(f"Copying from container {source_path} to local path {dest_path}")
         
         # Get archive from container
-        bits, stat = container.get_archive(str(source_path))
+        bits, stat = container.get_archive(source_posix)
         
         # Concatenate all chunks into a single bytes object
         archive_data = b''.join(bits)

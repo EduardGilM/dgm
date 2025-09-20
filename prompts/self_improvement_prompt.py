@@ -189,7 +189,18 @@ def read_mdlog_file(filepath, filter=True):
         'Error in get_response_withtools',
     ]
     filtered_lines = []
-    with open(filepath, 'r') as f:
+    # Try UTF-8 first, then fall back similarly to read_file
+    try:
+        f = open(filepath, 'r', encoding='utf-8', errors='strict')
+    except Exception:
+        try:
+            f = open(filepath, 'r', encoding='utf-8-sig', errors='strict')
+        except Exception:
+            try:
+                f = open(filepath, 'r', encoding='cp1252', errors='strict')
+            except Exception:
+                f = open(filepath, 'r', encoding='utf-8', errors='replace')
+    with f:
         for line in f:
             # Check if line contains any of the unwanted strings
             if not any(line.startswith(fc) for fc in filter_content):

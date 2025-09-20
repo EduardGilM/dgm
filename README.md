@@ -28,6 +28,31 @@ export OPENAI_API_KEY='...'
 export ANTHROPIC_API_KEY='...'
 ```
 
+### .env (recommended)
+This project supports a `.env` file to configure models and API keys without setting shell variables each time.
+
+1) Copy the example file and edit it:
+
+```bash
+cp .env.example .env
+```
+
+2) Open `.env` and set the variables you need. Examples:
+
+```
+DIAGNOSE_MODEL=openrouter/deepseek/deepseek-chat-v3.1:free
+OPENROUTER_API_KEY=sk-or-...
+```
+
+or, for DeepSeek directly:
+
+```
+DIAGNOSE_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=sk-deepseek-...
+```
+
+The app automatically loads `.env` on startup.
+
 To use Ollama
 
 ```bash
